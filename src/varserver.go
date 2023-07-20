@@ -1,35 +1,47 @@
 package drpdelta
 
-func (v *variable) server() {
+func (v *variable) Run() {
 	for inMsg := range v.inbox {
 		switch inContent := inMsg.Content.(type) {
-		case QueueMessage:
-			if _, ok := v.queue[inContent.txid]; !ok {
+		case LockMessage:
+			if lockTxid, _, found := findWriteLock(v.locks); found {
+				if inContent.txid.Lt(lockTxid) {
+					// allow wait: the txn wanting the lock is older (has smaller timestamp)
+					v.queue[inContent.txid] = struct {
+						address Address
+						kind    LockKind
+					}{
+						address: inMsg.Sender,
+						kind:    inContent.kind,
+					}
+				} else {
+					// disallow wait: the txn wanting the lock is younger (has larger timestamp)
+					v.outbox <- OutboundMessage{Target: inMsg.Sender, Content: LockAbortMessage{txid: inContent.txid}}
+				}
+			} else {
+				// add to the queue to be added in tick()
 				v.queue[inContent.txid] = struct {
-					state queueState
-					Address
-					Txid
-					kind lockKind
+					address Address
+					kind    LockKind
 				}{
-					state:   pending,
-					Address: inMsg.Sender,
+					address: inMsg.Sender,
+					kind:    inContent.kind,
 				}
 			}
-		case LockMessage:
-			if qState, ok := v.queue[inContent.txid]; ok && qState.state == ready {
-				qState.kind = inContent.kind
-				qState.state = requested
-				v.queue[inContent.txid] = qState
-			}
+		case LockAbortMessage:
+			delete(v.locks, inContent.txid)
+			delete(v.queue, inContent.txid)
 		case ReadMessage:
 			if l, ok := v.locks[inContent.tx.id]; ok {
 				if l, ok := l.(lockStateLock); ok {
 					v.outbox <- OutboundMessage{Target: inMsg.Sender, Content: ReadResultMessage{txid: inContent.tx.id, value: v.value, valueTx: v.valueTx}}
-					if l.kind == read {
+					if l.kind == LockKindRead {
 						delete(v.locks, inContent.tx.id)
 					}
 
-					v.preds = append(v.preds, inContent.tx)
+					if l.kind == LockKindRead {
+						v.preds = append(v.preds, inContent.tx)
+					}
 				} else {
 					panic("invalid message: attempted read when had pending write")
 				}
@@ -39,7 +51,7 @@ func (v *variable) server() {
 		case WriteMessage:
 			if l, ok := v.locks[inContent.tx.id]; ok {
 				if l, ok := l.(lockStateLock); ok {
-					if l.kind == write {
+					if l.kind == LockKindWrite {
 						v.locks[inContent.tx.id] = lockStateWrite{
 							writes: inContent.tx.writes,
 							value:  inContent.value,
@@ -55,6 +67,8 @@ func (v *variable) server() {
 			} else {
 				panic("invalid message: attempted write when had no lock")
 			}
+		default:
+			panic("Unexpected message")
 		}
 
 		v.tick()
@@ -63,16 +77,11 @@ func (v *variable) server() {
 
 func (v *variable) tick() {
 	if !hasWriteLock(v.locks) {
-		for txid, qState := range v.queue {
-			if qState.state == pending {
-				qState.state = ready
-				v.queue[txid] = qState
-				v.outbox <- OutboundMessage{Target: qState.Address, Content: QueueGrantedMessage{txid: txid}}
-			}
-		}
-
+		noWrite := false
 		if t, write, ok := findPendingWrite(v.locks); ok {
 			if len(v.locks) == 1 {
+				// finish the pending write
+
 				for _, sub := range v.subscribers {
 					v.outbox <- OutboundMessage{Target: sub, Content: ChangeMessage{txs: []Tx{{id: t, writes: write.writes}}, preds: v.preds, value: write.value}}
 				}
@@ -80,18 +89,26 @@ func (v *variable) tick() {
 				v.value = write.value
 				v.valueTx = Tx{id: t, writes: write.writes}
 				v.preds = []Tx{v.valueTx}
+				v.locks = map[Txid]lockState{}
+				noWrite = true
 			}
-		} else if len(v.locks) > 0 {
-			var minTxid Txid
+		} else {
+			noWrite = true
+		}
+
+		if noWrite && len(v.queue) > 0 {
+			var maxTxid Txid
 			for txid := range v.queue {
-				if txid < minTxid {
-					minTxid = txid
+				if (maxTxid == Txid{}) || maxTxid.Lt(txid) {
+					maxTxid = txid
 				}
 			}
 
-			if v.queue[minTxid].state == requested {
+			if maxTxid != (Txid{}) {
 				// grant lock
-				v.outbox <- OutboundMessage{Target: v.queue[minTxid].Address, Content: LockGrantedMessage{txid: minTxid, kind: v.queue[minTxid].kind}}
+				v.locks[maxTxid] = lockStateLock{kind: v.queue[maxTxid].kind, address: v.queue[maxTxid].address}
+				v.outbox <- OutboundMessage{Target: v.queue[maxTxid].address, Content: LockGrantedMessage{txid: maxTxid}}
+				delete(v.queue, maxTxid)
 			}
 		}
 	}
@@ -99,12 +116,22 @@ func (v *variable) tick() {
 
 func hasWriteLock(locks map[Txid]lockState) bool {
 	for _, l := range locks {
-		if l, ok := l.(lockStateLock); ok && l.kind == write {
+		if l, ok := l.(lockStateLock); ok && l.kind == LockKindWrite {
 			return true
 		}
 	}
 
 	return false
+}
+
+func findWriteLock(locks map[Txid]lockState) (Txid, lockStateLock, bool) {
+	for txid, l := range locks {
+		if l, ok := l.(lockStateLock); ok && l.kind == LockKindWrite {
+			return txid, l, true
+		}
+	}
+
+	return Txid{}, lockStateLock{}, false
 }
 
 func findPendingWrite(locks map[Txid]lockState) (Txid, lockStateWrite, bool) {
@@ -114,67 +141,64 @@ func findPendingWrite(locks map[Txid]lockState) (Txid, lockStateWrite, bool) {
 		}
 	}
 
-	return Txid(""), lockStateWrite{}, false
+	return Txid{}, lockStateWrite{}, false
 }
 
-func NewVariable(address Address, value any) variable {
-	return variable{
-		Address:     address,
+func (o *orchestrator) NewVariable(address Address, value any) *variable {
+	inbox, outbox := o.RegisterActor(address)
+
+	return &variable{
+		address:     address,
+		inbox:       inbox,
+		outbox:      outbox,
 		value:       value,
+		valueTx:     Tx{id: Txid{}, writes: []Address{}},
 		subscribers: []Address{},
 		queue: map[Txid]struct {
-			state queueState
-			Address
-			Txid
-			kind lockKind
+			address Address
+			kind    LockKind
 		}{},
 		locks: map[Txid]lockState{},
-		preds: []Tx{{id: "init", writes: []Address{}}},
+		preds: []Tx{{id: Txid{}, writes: []Address{}}},
 	}
 }
 
-func (v *variable) Subscribe(who Address) {
+func (v *variable) Subscribe(who Address) (any, map[Address]struct{}) {
 	v.subscribers = append(v.subscribers, who)
 
-	v.outbox <- OutboundMessage{Target: who, Content: ChangeMessage{txs: []Tx{v.valueTx}, preds: []Tx{}, value: v.value}}
+	return v.value, map[Address]struct{}{(v.address): {}}
+}
+
+func (v *variable) Address() Address {
+	return v.address
 }
 
 type variable struct {
-	Address     Address
+	address     Address
 	inbox       <-chan InboundMessage
 	outbox      chan<- OutboundMessage
 	value       any
 	valueTx     Tx
 	subscribers []Address
 	queue       map[Txid]struct {
-		state queueState
-		Address
-		Txid
-		kind lockKind
+		address Address
+		kind    LockKind
 	}
 	locks map[Txid]lockState
 	preds []Tx
 }
 
-type queueState int
+type LockKind int
 
 const (
-	pending queueState = iota
-	ready
-	requested
-)
-
-type lockKind int
-
-const (
-	read lockKind = iota
-	write
+	LockKindRead LockKind = iota
+	LockKindWrite
 )
 
 type lockState any
 
 type lockStateLock struct {
-	kind    lockKind
+	kind    LockKind
 	address Address
 }
 

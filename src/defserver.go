@@ -1,36 +1,40 @@
 package drpdelta
 
-func (d *definition) server(inbox <-chan InboundMessage, outbox chan<- OutboundMessage) {
-	for inMsg := range inbox {
+func (d *definition) Run() {
+	for inMsg := range d.inbox {
 		switch inContent := inMsg.Content.(type) {
 		case ChangeMessage:
 			inContentRef := &inContent
 
 			d.changeLists[inMsg.Sender] = append(d.changeLists[inMsg.Sender], inContentRef)
-			for _, tx := range inContent.txs {
-				txid := tx.id
-				if _, found := d.changeGraph[txid]; !found {
-					d.changeGraph[txid] = map[Address]*ChangeMessage{}
+			for _, tx := range inContentRef.txs {
+				if _, found := d.changeGraph[tx.id]; !found {
+					d.changeGraph[tx.id] = map[Address]*ChangeMessage{}
 				}
 
-				d.changeGraph[txid][inMsg.Sender] = inContentRef
+				d.changeGraph[tx.id][inMsg.Sender] = inContentRef
 			}
 
-			for _, pred := range inContent.preds {
+			for _, pred := range inContentRef.preds {
 				if _, found := d.changeGraph[pred.id]; !found {
 					d.changeGraph[pred.id] = map[Address]*ChangeMessage{}
-					for _, name := range pred.writes {
+				}
+
+				for _, name := range pred.writes {
+					if _, found := d.changeGraph[pred.id][name]; !found {
 						d.changeGraph[pred.id][name] = nil
 					}
 				}
 			}
+		default:
+			panic("Unexpected message")
 		}
 
-		d.tick(inbox, outbox)
+		d.tick()
 	}
 }
 
-func (d *definition) tick(inbox <-chan InboundMessage, outbox chan<- OutboundMessage) {
+func (d *definition) tick() {
 	var smallestTransitivePreds map[*ChangeMessage]struct{}
 	for _, changeList := range d.changeLists {
 		if len(changeList) == 0 {
@@ -50,16 +54,19 @@ func (d *definition) tick(inbox <-chan InboundMessage, outbox chan<- OutboundMes
 		allTxs, allPreds := unionTxsPreds(smallestTransitivePreds)
 
 		for inputName, changeList := range d.changeLists {
+			var finalI int
 			for i, change := range changeList {
 				if _, found := smallestTransitivePreds[change]; found {
 					// execute the change
 					d.replicas[inputName] = change.value
+					d.appliedChanges[change] = struct{}{}
 					delete(smallestTransitivePreds, change)
+					finalI = i + 1
 				} else {
-					d.changeLists[inputName] = d.changeLists[inputName][i:]
 					break
 				}
 			}
+			d.changeLists[inputName] = d.changeLists[inputName][finalI:]
 		}
 
 		if len(smallestTransitivePreds) > 0 {
@@ -69,7 +76,7 @@ func (d *definition) tick(inbox <-chan InboundMessage, outbox chan<- OutboundMes
 		newValue := d.f(d.replicas)
 
 		for _, sub := range d.subscribers {
-			outbox <- OutboundMessage{Target: sub, Content: ChangeMessage{txs: allTxs, preds: allPreds, value: newValue}}
+			d.outbox <- OutboundMessage{Target: sub, Content: ChangeMessage{txs: allTxs, preds: allPreds, value: newValue}}
 		}
 	}
 }
@@ -82,6 +89,9 @@ func (d *definition) findTransitivePreds(change *ChangeMessage) (map[*ChangeMess
 
 func (d *definition) _findTransitivePreds(change *ChangeMessage, preds map[*ChangeMessage]struct{}) bool {
 	if _, found := preds[change]; found {
+		return true
+	}
+	if _, found := d.appliedChanges[change]; found {
 		return true
 	}
 	preds[change] = struct{}{}
@@ -98,6 +108,7 @@ func (d *definition) _findTransitivePreds(change *ChangeMessage, preds map[*Chan
 
 		for _, overlappingInput := range overlappingInputs {
 			thisInputChange := d.changeGraph[tx.id][overlappingInput]
+
 			if thisInputChange == nil {
 				// this input has not yet received this pred
 				return false
@@ -125,6 +136,7 @@ func (d *definition) _findTransitivePreds(change *ChangeMessage, preds map[*Chan
 
 			for _, overlappingInput := range overlappingInputs {
 				thisInputChange := d.changeGraph[changePred.id][overlappingInput]
+
 				if thisInputChange == nil {
 					// this input has not yet received this pred
 					return false
@@ -145,7 +157,7 @@ func unionTxsPreds(changes map[*ChangeMessage]struct{}) (txs []Tx, preds []Tx) {
 	txsMap := map[Txid][]Address{}
 	predsMap := map[Txid][]Address{}
 
-	for change, _ := range changes {
+	for change := range changes {
 		for _, tx := range change.txs {
 			txsMap[tx.id] = tx.writes
 		}
@@ -166,36 +178,62 @@ func unionTxsPreds(changes map[*ChangeMessage]struct{}) (txs []Tx, preds []Tx) {
 	return
 }
 
-func NewDefinition(address Address, deps []ReactiveNode, f func(map[Address]any) any) definition {
+func (o *orchestrator) NewDefinition(address Address, deps []ReactiveNode, f func(map[Address]any) any) *definition {
+	inbox, outbox := o.RegisterActor(address)
+
 	replicas := map[Address]any{}
 	changeLists := map[Address][]*ChangeMessage{}
+	inputTransitiveVariableDeps := map[Address]map[Address]struct{}{}
 	for _, dep := range deps {
-		dep.Subscribe(address)
-		replicas[dep.Address()] = nil
+		replicas[dep.Address()], inputTransitiveVariableDeps[dep.Address()] = dep.Subscribe(address)
 		changeLists[dep.Address()] = []*ChangeMessage{}
 	}
 
-	return definition{
-		Address:                     address,
+	currentValue := f(replicas)
+
+	return &definition{
+		address:                     address,
+		inbox:                       inbox,
+		outbox:                      outbox,
 		replicas:                    replicas,
 		changeGraph:                 map[Txid]map[Address]*ChangeMessage{},
 		changeLists:                 changeLists,
+		appliedChanges:              map[*ChangeMessage]struct{}{},
 		f:                           f,
+		currentValue:                currentValue,
 		subscribers:                 []Address{},
-		inputTransitiveVariableDeps: map[Address]map[Address]struct{}{}, // TODO: properly impl this
+		inputTransitiveVariableDeps: inputTransitiveVariableDeps,
 	}
 }
 
-func (d *definition) Subscribe(who Address) {
+func (d *definition) Subscribe(who Address) (any, map[Address]struct{}) {
 	d.subscribers = append(d.subscribers, who)
+
+	sources := map[Address]struct{}{}
+
+	for _, inputSources := range d.inputTransitiveVariableDeps {
+		for sourceAddress := range inputSources {
+			sources[sourceAddress] = struct{}{}
+		}
+	}
+
+	return d.currentValue, sources
+}
+
+func (d *definition) Address() Address {
+	return d.address
 }
 
 type definition struct {
-	Address                     Address
+	address                     Address
+	inbox                       <-chan InboundMessage
+	outbox                      chan<- OutboundMessage
 	replicas                    map[Address]any
 	changeGraph                 map[Txid]map[Address]*ChangeMessage
 	changeLists                 map[Address][]*ChangeMessage
+	appliedChanges              map[*ChangeMessage]struct{}
 	f                           func(map[Address]any) any
+	currentValue                any
 	subscribers                 []Address
 	inputTransitiveVariableDeps map[Address]map[Address]struct{}
 }

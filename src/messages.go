@@ -1,6 +1,8 @@
 package drpdelta
 
-import "github.com/google/uuid"
+import (
+	"time"
+)
 
 type InboundMessage struct {
 	Sender  Address
@@ -14,13 +16,9 @@ type OutboundMessage struct {
 
 type Address string
 
-type QueueMessage struct {
-	txid Txid
-}
-
 type LockMessage struct {
 	txid Txid
-	kind lockKind
+	kind LockKind
 }
 
 type ReadMessage struct {
@@ -33,13 +31,12 @@ type WriteMessage struct {
 	value any
 }
 
-type QueueGrantedMessage struct {
+type LockAbortMessage struct {
 	txid Txid
 }
 
 type LockGrantedMessage struct {
 	txid Txid
-	kind lockKind
 }
 
 type ReadResultMessage struct {
@@ -62,8 +59,21 @@ type Tx struct {
 	writes []Address
 }
 
-type Txid string
+type Txid struct {
+	secs    int64
+	nanos   int
+	address Address
+}
 
-func NewTxid() Txid {
-	return Txid(uuid.New().String())
+func NewTxid(address Address) Txid {
+	now := time.Now()
+	return Txid{
+		secs:    now.Unix(),
+		nanos:   now.Nanosecond(),
+		address: address,
+	}
+}
+
+func (t Txid) Lt(other Txid) bool {
+	return t.secs < other.secs || t.secs == other.secs && t.nanos < other.nanos || t.secs == other.secs && t.nanos == other.nanos && t.address < other.address
 }
