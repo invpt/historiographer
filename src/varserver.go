@@ -4,8 +4,38 @@ func (v *variable) Run() {
 	for inMsg := range v.inbox {
 		switch inContent := inMsg.Content.(type) {
 		case LockMessage:
-			if lockTxid, _, found := findWriteLock(v.locks); found {
-				if inContent.txid.Lt(lockTxid) {
+			if _, _, found := findWriteLock(v.locks); found {
+				var youngestTxid Txid
+				for txid := range v.locks {
+					if (youngestTxid == Txid{}) || txid.Lt(youngestTxid) {
+						youngestTxid = txid
+					}
+				}
+
+				if inContent.txid.Lt(youngestTxid) {
+					// allow wait: the txn wanting the lock is older (has smaller timestamp)
+					v.queue[inContent.txid] = struct {
+						address Address
+						kind    LockKind
+					}{
+						address: inMsg.Sender,
+						kind:    inContent.kind,
+					}
+				} else {
+					// disallow wait: the txn wanting the lock is younger (has larger timestamp)
+					v.outbox <- OutboundMessage{Target: inMsg.Sender, Content: LockAbortMessage{txid: inContent.txid}}
+				}
+			} else if _, _, found := findPendingWrite(v.locks); found {
+				var youngestReadTxid Txid
+				for txid, lock := range v.locks {
+					if _, ok := lock.(lockStateLock); ok {
+						if (youngestReadTxid == Txid{}) || txid.Lt(youngestReadTxid) {
+							youngestReadTxid = txid
+						}
+					}
+				}
+
+				if (youngestReadTxid == Txid{}) || inContent.txid.Lt(youngestReadTxid) {
 					// allow wait: the txn wanting the lock is older (has smaller timestamp)
 					v.queue[inContent.txid] = struct {
 						address Address

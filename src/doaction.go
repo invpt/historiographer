@@ -1,6 +1,8 @@
 package drpdelta
 
 import (
+	"time"
+
 	"github.com/google/uuid"
 )
 
@@ -8,9 +10,10 @@ func (o *orchestrator) DoAction(action Action) {
 	address := Address("action-" + uuid.New().String())
 	inbox, outbox := o.RegisterActor(address)
 
+	txid := NewTxid(address)
+
 Try:
 	for {
-		txid := NewTxid(address)
 
 		// make a list of all the things we write to for later use
 		writes := []Address{}
@@ -25,33 +28,35 @@ Try:
 			outbox <- OutboundMessage{Target: name, Content: LockMessage{txid: txid, kind: kind}}
 		}
 		// wait to be granted all locks
+		aborters := map[Address]struct{}{}
 		lockResponseCount := 0
 	WaitLocks:
 		for inMsg := range inbox {
-			switch inContent := inMsg.Content.(type) {
+			switch inMsg.Content.(type) {
 			case LockGrantedMessage:
-				if inContent.txid == txid {
-					lockResponseCount += 1
-
-					if lockResponseCount == len(action.Targets) {
-						break WaitLocks
-					}
-				}
+				lockResponseCount += 1
 			case LockAbortMessage:
-				if inContent.txid == txid {
-					for address := range action.Targets {
-						if address == inMsg.Sender {
-							continue
-						}
-
-						outbox <- OutboundMessage{Target: address, Content: LockAbortMessage{txid: txid}}
-					}
-
-					continue Try
-				}
+				aborters[inMsg.Sender] = struct{}{}
 			default:
 				panic("Unexpected message")
 			}
+
+			if lockResponseCount == len(action.Targets)-len(aborters) {
+				break WaitLocks
+			}
+		}
+
+		if len(aborters) > 0 {
+			for address := range action.Targets {
+				if _, found := aborters[address]; found {
+					continue
+				}
+
+				outbox <- OutboundMessage{Target: address, Content: LockAbortMessage{txid: txid}}
+			}
+
+			time.Sleep(time.Millisecond * 5)
+			continue Try
 		}
 
 		// request all reads

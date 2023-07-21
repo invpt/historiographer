@@ -2,12 +2,12 @@ package drpdelta
 
 import "github.com/google/uuid"
 
-type inspector struct {
+type Inspector struct {
 	address Address
 	Values  <-chan any
 }
 
-func (o *orchestrator) NewInspector(dep ReactiveNode) *inspector {
+func (o *orchestrator) NewInspector(dep ReactiveNode) *Inspector {
 	address := Address("inspector-" + uuid.New().String())
 	inbox, _ := o.RegisterActor(address)
 	values := make(chan any, 1024)
@@ -19,7 +19,7 @@ func (o *orchestrator) NewInspector(dep ReactiveNode) *inspector {
 			values <- change.value
 		}
 	}()
-	return &inspector{
+	return &Inspector{
 		address: address,
 		Values:  values,
 	}

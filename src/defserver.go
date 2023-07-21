@@ -35,48 +35,52 @@ func (d *definition) Run() {
 }
 
 func (d *definition) tick() {
-	var smallestTransitivePreds map[*ChangeMessage]struct{}
-	for _, changeList := range d.changeLists {
-		if len(changeList) == 0 {
-			continue
-		}
-
-		change := changeList[0]
-
-		if transitivePreds, ok := d.findTransitivePreds(change); ok {
-			if smallestTransitivePreds == nil || len(transitivePreds) < len(smallestTransitivePreds) {
-				smallestTransitivePreds = transitivePreds
+	for {
+		var smallestTransitivePreds map[*ChangeMessage]struct{}
+		for _, changeList := range d.changeLists {
+			if len(changeList) == 0 {
+				continue
 			}
-		}
-	}
 
-	if smallestTransitivePreds != nil {
-		allTxs, allPreds := unionTxsPreds(smallestTransitivePreds)
+			change := changeList[0]
 
-		for inputName, changeList := range d.changeLists {
-			var finalI int
-			for i, change := range changeList {
-				if _, found := smallestTransitivePreds[change]; found {
-					// execute the change
-					d.replicas[inputName] = change.value
-					d.appliedChanges[change] = struct{}{}
-					delete(smallestTransitivePreds, change)
-					finalI = i + 1
-				} else {
-					break
+			if transitivePreds, ok := d.findTransitivePreds(change); ok {
+				if smallestTransitivePreds == nil || len(transitivePreds) < len(smallestTransitivePreds) {
+					smallestTransitivePreds = transitivePreds
 				}
 			}
-			d.changeLists[inputName] = d.changeLists[inputName][finalI:]
 		}
 
-		if len(smallestTransitivePreds) > 0 {
-			panic("invariant broken: didn't exhaust the transitive preds set!")
-		}
+		if smallestTransitivePreds != nil {
+			allTxs, allPreds := unionTxsPreds(smallestTransitivePreds)
 
-		newValue := d.f(d.replicas)
+			for inputName, changeList := range d.changeLists {
+				var finalI int
+				for i, change := range changeList {
+					if _, found := smallestTransitivePreds[change]; found {
+						// execute the change
+						d.replicas[inputName] = change.value
+						d.appliedChanges[change] = struct{}{}
+						delete(smallestTransitivePreds, change)
+						finalI = i + 1
+					} else {
+						break
+					}
+				}
+				d.changeLists[inputName] = d.changeLists[inputName][finalI:]
+			}
 
-		for _, sub := range d.subscribers {
-			d.outbox <- OutboundMessage{Target: sub, Content: ChangeMessage{txs: allTxs, preds: allPreds, value: newValue}}
+			if len(smallestTransitivePreds) > 0 {
+				panic("invariant broken: didn't exhaust the transitive preds set!")
+			}
+
+			newValue := d.f(d.replicas)
+
+			for _, sub := range d.subscribers {
+				d.outbox <- OutboundMessage{Target: sub, Content: ChangeMessage{txs: allTxs, preds: allPreds, value: newValue}}
+			}
+		} else {
+			break
 		}
 	}
 }

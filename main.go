@@ -2,11 +2,16 @@ package main
 
 import (
 	drpdelta "drp-delta/src"
-	"fmt"
+	"math/rand"
+	"strconv"
 )
 
 func main() {
-	o := drpdelta.NewOrchestrator()
+	//manyVars(50, 100, 5, lockModeSlow)
+	//cross(20, 7, 19, 78, lockModeSlow)
+	//manyDefs(1, 100, 10, lockModeSlow)
+
+	/*o := drpdelta.NewOrchestrator()
 
 	x := o.NewVariable("x", 0)
 	y := o.NewVariable("y", 0)
@@ -68,5 +73,294 @@ func main() {
 
 	for val := range zVal.Values {
 		fmt.Println("New value from z:", val)
+	}*/
+}
+
+// numNodes and numTxns are powers of 2
+func manyVars(numVars int, numTxns int, numClients int, mode lockMode) {
+	o := drpdelta.NewOrchestrator()
+
+	vars := make([]drpdelta.ReactiveNode, 0, numVars)
+	for i := 0; i < numVars; i++ {
+		vars = append(vars, o.NewVariable(drpdelta.Address("var-"+strconv.Itoa(i)), 0))
+	}
+	def := o.NewDefinition("def", vars, func(m map[drpdelta.Address]any) any {
+		sum := 0
+		for _, val := range m {
+			sum += val.(int)
+		}
+		return sum
+	})
+	ins := o.NewInspector(def)
+
+	expectedSum := 0
+	actions := []drpdelta.Action{}
+
+	for i := 0; i < numTxns; i++ {
+		targets := map[drpdelta.Address]drpdelta.LockKind{}
+
+		var writeTarget drpdelta.Address
+		if mode == lockModeFast {
+			numTargets := rand.Int() % len(vars)
+
+			for target := 0; target < numTargets; target++ {
+				for {
+					address := vars[rand.Int()%len(vars)].Address()
+					if _, found := targets[address]; !found {
+						if target == 0 {
+							writeTarget = address
+							targets[address] = drpdelta.LockKindWrite
+						} else {
+							targets[address] = drpdelta.LockKindRead
+						}
+						break
+					}
+				}
+			}
+		} else {
+			writeJ := rand.Int() % len(vars)
+			for j, var_ := range vars {
+				if j == writeJ {
+					writeTarget = var_.Address()
+					targets[var_.Address()] = drpdelta.LockKindWrite
+				} else {
+					targets[var_.Address()] = drpdelta.LockKindRead
+				}
+			}
+		}
+
+		expectedSum += 1
+		actions = append(actions, drpdelta.Action{
+			Targets: targets,
+			F: func(m map[drpdelta.Address]any) map[drpdelta.Address]any {
+				return map[drpdelta.Address]any{
+					(writeTarget): m[writeTarget].(int) + 1,
+				}
+			},
+		})
+	}
+
+	for _, var_ := range vars {
+		go var_.Run()
+	}
+	go def.Run()
+
+	rand.Shuffle(len(actions), func(i, j int) {
+		actions[i], actions[j] = actions[j], actions[i]
+	})
+
+	step := len(actions) / numClients
+	if step == 0 {
+		step = 1
+	}
+	for lo := 0; lo < len(actions); lo += step {
+		lo := lo
+		hi := lo + step
+		if hi > len(actions) {
+			hi = len(actions)
+		}
+		go func() {
+			for _, action := range actions[lo:hi] {
+				o.DoAction(action)
+			}
+		}()
+	}
+
+	for val := range ins.Values {
+		if val == expectedSum {
+			break
+		}
 	}
 }
+
+// numNodes and numTxns are powers of 2
+func cross(numPylons int, pylonLength int, numTxns int, numClients int, mode lockMode) {
+	o := drpdelta.NewOrchestrator()
+
+	vars := make([]drpdelta.ReactiveNode, 0, numPylons)
+	for i := 0; i < numPylons; i++ {
+		vars = append(vars, o.NewVariable(drpdelta.Address("var-"+strconv.Itoa(i)), 0))
+	}
+
+	nodes := [][]drpdelta.ReactiveNode{vars}
+	for i := 1; i <= pylonLength; i++ {
+		nodes = append(nodes, []drpdelta.ReactiveNode{})
+		for j := 0; j < numPylons; j++ {
+			address := drpdelta.Address("def-" + strconv.Itoa(i) + "-" + strconv.Itoa(j))
+			deps := []drpdelta.ReactiveNode{}
+
+			if j != 0 {
+				deps = append(deps, nodes[i-1][j-1])
+			}
+			deps = append(deps, nodes[i-1][j])
+			if j != numPylons-1 {
+				deps = append(deps, nodes[i-1][j+1])
+			}
+
+			nodeBelowAddress := nodes[i-1][j].Address()
+
+			nodes[i] = append(nodes[i], o.NewDefinition(address, deps, func(m map[drpdelta.Address]any) any { return m[nodeBelowAddress] }))
+		}
+	}
+	ins := []drpdelta.Inspector{}
+	for j := 0; j < numPylons; j++ {
+		ins = append(ins, *o.NewInspector(nodes[pylonLength][j]))
+	}
+
+	expectedSum := make([]int, numPylons)
+	actions := []drpdelta.Action{}
+
+	for txIdx := 0; txIdx < numTxns; txIdx++ {
+		targets := map[drpdelta.Address]drpdelta.LockKind{}
+
+		var writePylon int
+		var writeTarget drpdelta.Address
+		if mode == lockModeFast {
+			numTargets := 1 + rand.Int()%len(vars)
+
+			for target := 0; target < numTargets; target++ {
+				for {
+					pylon := rand.Int() % len(vars)
+					address := vars[pylon].Address()
+					if _, found := targets[address]; !found {
+						if target == 0 {
+							writePylon = pylon
+							writeTarget = address
+							targets[address] = drpdelta.LockKindWrite
+						} else {
+							targets[address] = drpdelta.LockKindRead
+						}
+						break
+					}
+				}
+			}
+		} else {
+			writeJ := rand.Int() % len(vars)
+			for j, var_ := range vars {
+				if j == writeJ {
+					writePylon = writeJ
+					writeTarget = var_.Address()
+					targets[var_.Address()] = drpdelta.LockKindWrite
+				} else {
+					targets[var_.Address()] = drpdelta.LockKindRead
+				}
+			}
+		}
+
+		expectedSum[writePylon] += 1
+		actions = append(actions, drpdelta.Action{
+			Targets: targets,
+			F: func(m map[drpdelta.Address]any) map[drpdelta.Address]any {
+				return map[drpdelta.Address]any{
+					(writeTarget): m[writeTarget].(int) + 1,
+				}
+			},
+		})
+	}
+
+	for _, row := range nodes {
+		for _, node := range row {
+			go node.Run()
+		}
+	}
+
+	rand.Shuffle(len(actions), func(i, j int) {
+		actions[i], actions[j] = actions[j], actions[i]
+	})
+
+	step := len(actions) / numClients
+	if step == 0 {
+		step = 1
+	}
+	for lo := 0; lo < len(actions); lo += step {
+		lo := lo
+		hi := lo + step
+		if hi > len(actions) {
+			hi = len(actions)
+		}
+		go func() {
+			for _, action := range actions[lo:hi] {
+				o.DoAction(action)
+			}
+		}()
+	}
+
+	for i, ins := range ins {
+		for val := range ins.Values {
+			if val == expectedSum[i] {
+				break
+			}
+		}
+	}
+}
+
+// numNodes and numTxns are powers of 2
+func manyDefs(numDefs int, numTxns int, numClients int, mode lockMode) {
+	o := drpdelta.NewOrchestrator()
+
+	var_ := o.NewVariable(drpdelta.Address("var"), 0)
+	defs := make([]drpdelta.ReactiveNode, 0, numDefs)
+	ins := make([]drpdelta.Inspector, 0, numDefs)
+	for i := 0; i < numDefs; i++ {
+		defs = append(defs, o.NewDefinition(drpdelta.Address("def"+strconv.Itoa(i)), []drpdelta.ReactiveNode{var_}, func(m map[drpdelta.Address]any) any { return m[var_.Address()] }))
+		ins = append(ins, *o.NewInspector(defs[i]))
+	}
+
+	expectedSum := 0
+	actions := []drpdelta.Action{}
+
+	for txIdx := 0; txIdx < numTxns; txIdx++ {
+		targets := map[drpdelta.Address]drpdelta.LockKind{(var_.Address()): drpdelta.LockKindWrite}
+
+		expectedSum += 1
+		actions = append(actions, drpdelta.Action{
+			Targets: targets,
+			F: func(m map[drpdelta.Address]any) map[drpdelta.Address]any {
+				return map[drpdelta.Address]any{
+					(var_.Address()): m[var_.Address()].(int) + 1,
+				}
+			},
+		})
+	}
+
+	go var_.Run()
+	for _, def := range defs {
+		go def.Run()
+	}
+
+	rand.Shuffle(len(actions), func(i, j int) {
+		actions[i], actions[j] = actions[j], actions[i]
+	})
+
+	step := len(actions) / numClients
+	if step == 0 {
+		step = 1
+	}
+	for lo := 0; lo < len(actions); lo += step {
+		lo := lo
+		hi := lo + step
+		if hi > len(actions) {
+			hi = len(actions)
+		}
+		go func() {
+			for _, action := range actions[lo:hi] {
+				o.DoAction(action)
+			}
+		}()
+	}
+
+	for _, ins := range ins {
+		for val := range ins.Values {
+			if val == expectedSum {
+				break
+			}
+		}
+	}
+}
+
+type lockMode int
+
+const (
+	lockModeFast lockMode = iota
+	lockModeSlow
+)
