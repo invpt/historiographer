@@ -7,6 +7,10 @@ import (
 )
 
 func (o *orchestrator) DoAction(action Action) {
+	if len(action.Targets) == 0 {
+		panic("Attempted action with 0 targets!")
+	}
+
 	address := Address("action-" + uuid.New().String())
 	inbox, outbox := o.RegisterActor(address)
 

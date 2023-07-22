@@ -2,7 +2,6 @@ package drpdelta
 
 import (
 	"sync"
-	"time"
 )
 
 type ReactiveNode interface {
@@ -26,7 +25,7 @@ func (o *orchestrator) RegisterActor(address Address) (<-chan InboundMessage, ch
 	o.actors.Store(address, inbox)
 	go func() {
 		for outbound := range outbox {
-			time.Sleep(1 * time.Millisecond)
+			//time.Sleep(1 * time.Millisecond)
 			targetInboxAny, ok := o.actors.Load(outbound.Target)
 			if !ok {
 				panic("Invariant broken: failed to send to inbox")

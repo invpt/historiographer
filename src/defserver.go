@@ -53,6 +53,7 @@ func (d *definition) tick() {
 
 		if smallestTransitivePreds != nil {
 			allTxs, allPreds := unionTxsPreds(smallestTransitivePreds)
+			allPreds = append(allPreds, d.prevTxs...)
 
 			for inputName, changeList := range d.changeLists {
 				var finalI int
@@ -79,6 +80,8 @@ func (d *definition) tick() {
 			for _, sub := range d.subscribers {
 				d.outbox <- OutboundMessage{Target: sub, Content: ChangeMessage{txs: allTxs, preds: allPreds, value: newValue}}
 			}
+
+			d.prevTxs = allTxs
 		} else {
 			break
 		}
@@ -236,6 +239,7 @@ type definition struct {
 	changeGraph                 map[Txid]map[Address]*ChangeMessage
 	changeLists                 map[Address][]*ChangeMessage
 	appliedChanges              map[*ChangeMessage]struct{}
+	prevTxs                     []Tx
 	f                           func(map[Address]any) any
 	currentValue                any
 	subscribers                 []Address

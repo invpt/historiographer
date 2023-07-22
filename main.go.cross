@@ -12,7 +12,7 @@ import (
 
 func main() {
 
-	file, err := os.Create("manyVars" + time.Now().Format("20060102150405") + ".csv")
+	file, err := os.Create("cross" + time.Now().Format("20060102150405") + ".csv")
 	if err != nil {
 		panic(err)
 	}
@@ -21,16 +21,17 @@ func main() {
 	writer := csv.NewWriter(file)
 	defer writer.Flush()
 
-	numVars := 16
+	numPylons := 16
+	pylonLength := 2
 	numTxns := 64
 
-	writer.Write([]string{"Benchmark parameters: manyVars(numVars=" + strconv.Itoa(numVars) + ", numTxns=" + strconv.Itoa(numTxns) + ")"})
+	writer.Write([]string{"Benchmark parameters: cross(numPylons=" + strconv.Itoa(numPylons) + ", pylonLength=" + strconv.Itoa(pylonLength) + ", numTxns=" + strconv.Itoa(numTxns) + ")"})
 	writer.Write([]string{"mode", "numClients", "trial", "duration"})
 	for mode := lockModeFast; mode == lockModeFast || mode == lockModeSlow; mode++ {
-		for numClients := 1; numClients <= 2*numVars; numClients++ {
-			for trial := 0; trial < 128; trial++ {
+		for numClients := 1; numClients <= numPylons*2; numClients++ {
+			for trial := 0; trial < 64; trial++ {
 				fmt.Println(mode, numClients, trial)
-				duration := manyVars(numVars, numTxns, numClients, mode)
+				duration := cross(numPylons, pylonLength, numTxns, numClients, mode)
 				writer.Write([]string{strconv.Itoa(int(mode)), strconv.Itoa(numClients), strconv.Itoa(trial), strconv.FormatInt(duration.Microseconds(), 10)})
 			}
 			writer.Flush()
