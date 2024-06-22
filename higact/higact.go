@@ -26,8 +26,8 @@ type Address struct {
 	value string
 }
 
-func (a Address) String() string {
-	return a.value
+func (a Address) Lt(b Address) bool {
+	return a.value < b.value
 }
 
 type Inbox <-chan InboundMessage

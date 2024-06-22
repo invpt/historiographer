@@ -29,7 +29,7 @@ func newTxid(creator higact.Address) txid {
 }
 
 func (t txid) Lt(other txid) bool {
-	return t.secs < other.secs || t.secs == other.secs && t.nanos < other.nanos || t.secs == other.secs && t.nanos == other.nanos && t.creator.String() < other.creator.String()
+	return t.secs < other.secs || t.secs == other.secs && t.nanos < other.nanos || t.secs == other.secs && t.nanos == other.nanos && t.creator.Lt(other.creator)
 }
 
 /////////////////////////////////////////////
