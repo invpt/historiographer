@@ -15,7 +15,7 @@ type definition struct {
 
 	replicas map[higact.Address]any
 
-	f             func(func(higact.Address) any) any
+	valueFunc     func(dep Depend) any
 	value         any
 	valueProvides []tx
 
@@ -51,29 +51,35 @@ type changeLink struct {
 	address higact.Address
 }
 
-func (rt *Runtime) Definition(deps []higact.Address, f func(func(higact.Address) any) any) higact.Address {
+type Depend func(address higact.Address) any
+
+func (rt *Runtime) Definition(valueFunc func(dep Depend) any) higact.Address {
 	actor := rt.router.CreateActor()
 
 	d := &definition{
 		Actor:            actor,
-		f:                f,
-		replicas:         make(map[higact.Address]any, len(deps)),
+		valueFunc:        valueFunc,
+		replicas:         map[higact.Address]any{},
 		descendantInputs: map[higact.Address][]higact.Address{},
 		changes:          map[changeLink]*change{},
 		applied:          map[txid]tx{},
 	}
 
-	d.replicas = make(map[higact.Address]any, len(deps))
+	d.replicas = map[higact.Address]any{}
 	d.descendantInputs = map[higact.Address][]higact.Address{}
-	for _, dep := range deps {
-		d.Outbox <- higact.OutboundMessage{Target: dep, Data: subscribeMessage{}}
-		subscription := (<-d.Inbox).Data.(subscriptionGrantedMessage)
-		for _, variable := range subscription.AncestorVariables {
-			d.descendantInputs[variable] = append(d.descendantInputs[variable], dep)
+	d.value = valueFunc(func(a higact.Address) any {
+		if value, ok := d.replicas[a]; ok {
+			return value
+		} else {
+			d.Outbox <- higact.OutboundMessage{Target: a, Data: subscribeMessage{}}
+			subscription := (<-d.Inbox).Data.(subscriptionGrantedMessage)
+			for _, variable := range subscription.AncestorVariables {
+				d.descendantInputs[variable] = append(d.descendantInputs[variable], a)
+			}
+			d.replicas[a] = subscription.Value
+			return subscription.Value
 		}
-		d.replicas[dep] = subscription.Value
-	}
-	d.value = f(func(a higact.Address) any { return d.replicas[a] })
+	})
 
 	go d.run()
 
@@ -155,7 +161,11 @@ func (d *definition) run() {
 }
 
 func (d *definition) lookupReplicaValue(address higact.Address) any {
-	return d.replicas[address]
+	if value, ok := d.replicas[address]; ok {
+		return value
+	} else {
+		panic("Dynamic changes in dependencies are not currently supported")
+	}
 }
 
 // Converts a `ChangeMessage` to the internal `change` type.
@@ -313,7 +323,7 @@ func (d *definition) applyBatch(batch map[*change]struct{}) (provides []tx, requ
 		maxApplied[change.input] = change.order
 	}
 
-	d.value = d.f(d.lookupReplicaValue)
+	d.value = d.valueFunc(d.lookupReplicaValue)
 	d.valueProvides = provides
 
 	return
