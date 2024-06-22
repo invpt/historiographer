@@ -51,8 +51,8 @@ type changeLink struct {
 	address higact.Address
 }
 
-func NewDefinition(r higact.Router, deps []higact.Address, f func(func(higact.Address) any) any) *Definition {
-	actor := r.CreateActor()
+func (rt *Runtime) NewDefinition(deps []higact.Address, f func(func(higact.Address) any) any) *Definition {
+	actor := rt.router.CreateActor()
 
 	d := &Definition{
 		Actor:            actor,

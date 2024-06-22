@@ -4,8 +4,8 @@ import (
 	"hig/higact"
 )
 
-func Inspect(r higact.Router, what higact.Address) <-chan any {
-	actor := r.CreateActor()
+func (rt *Runtime) Inspect(what higact.Address) <-chan any {
+	actor := rt.router.CreateActor()
 	values := make(chan any, 1024)
 
 	go (func() {
@@ -21,7 +21,7 @@ func Inspect(r higact.Router, what higact.Address) <-chan any {
 			}
 		}
 
-		r.FreeActor(actor.Address)
+		rt.router.FreeActor(actor.Address)
 	})()
 
 	return values

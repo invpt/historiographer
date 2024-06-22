@@ -50,8 +50,8 @@ type lockStateWrite struct {
 	value any
 }
 
-func NewVariable(r higact.Router, value any) *Variable {
-	return &Variable{Actor: r.CreateActor(), locks: map[txid]lockState{}, nextChangeRequires: map[txid]tx{}, value: value}
+func (rt *Runtime) NewVariable(value any) *Variable {
+	return &Variable{Actor: rt.router.CreateActor(), locks: map[txid]lockState{}, nextChangeRequires: map[txid]tx{}, value: value}
 }
 
 func (v *Variable) Run() {

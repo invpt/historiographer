@@ -6,9 +6,9 @@ import (
 	"time"
 )
 
-func Transact(r higact.Router, targets map[higact.Address]LockKind, f func(map[higact.Address]any) map[higact.Address]any) {
-	actor := r.CreateActor()
-	defer r.FreeActor(actor.Address)
+func (rt *Runtime) Transact(targets map[higact.Address]LockKind, f func(map[higact.Address]any) map[higact.Address]any) {
+	actor := rt.router.CreateActor()
+	defer rt.router.FreeActor(actor.Address)
 
 	fmt.Println("Starting transaction,", actor.Address)
 
