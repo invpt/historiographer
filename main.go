@@ -29,7 +29,9 @@ func main() {
 	// Run some transactions
 	go (func() {
 		rt.Transact(
+			// Declare the required locks ahead of time
 			map[higact.Address]higrt.LockKind{a: higrt.LockKindWrite},
+			// Take as input the read values, output the values to write
 			func(m map[higact.Address]any) map[higact.Address]any {
 				return map[higact.Address]any{a: 2}
 			},
