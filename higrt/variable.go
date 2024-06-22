@@ -48,6 +48,7 @@ type lockStateWrite struct {
 	value any
 }
 
+// Creates and runs a new variable with `value` as its initial value.
 func (rt *Runtime) Variable(value any) higact.Address {
 	v := &variable{Actor: rt.router.CreateActor(), locks: map[txid]lockState{}, nextChangeRequires: map[txid]tx{}, value: value}
 	go v.run()

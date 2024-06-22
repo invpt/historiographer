@@ -53,6 +53,9 @@ type changeLink struct {
 
 type Depend func(address higact.Address) any
 
+// Creates and runs a new definition with its value defined by `valueFunc`.
+// `valueFunc` can load the values of other reactive nodes by calling `dep`
+// with the address of the node to read.
 func (rt *Runtime) Definition(valueFunc func(dep Depend) any) higact.Address {
 	actor := rt.router.CreateActor()
 
