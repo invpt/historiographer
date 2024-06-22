@@ -1,9 +1,7 @@
 package higrt
 
 import (
-	"fmt"
 	"hig/higact"
-	"reflect"
 )
 
 type Variable struct {
@@ -56,7 +54,6 @@ func (rt *Runtime) NewVariable(value any) *Variable {
 
 func (v *Variable) Run() {
 	for message := range v.Inbox {
-		fmt.Println("Received on variable", v.Address, message, reflect.TypeOf(message.Data))
 		switch messageData := message.Data.(type) {
 		case varLockAcquireMessage:
 			oldestTxid := messageData.Txid

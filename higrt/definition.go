@@ -21,7 +21,7 @@ type Definition struct {
 
 	pendingReads []pendingRead
 
-	descendentInputs map[higact.Address][]higact.Address
+	descendantInputs map[higact.Address][]higact.Address
 	subscribers      []higact.Address
 }
 
@@ -58,18 +58,18 @@ func (rt *Runtime) NewDefinition(deps []higact.Address, f func(func(higact.Addre
 		Actor:            actor,
 		f:                f,
 		replicas:         make(map[higact.Address]any, len(deps)),
-		descendentInputs: map[higact.Address][]higact.Address{},
+		descendantInputs: map[higact.Address][]higact.Address{},
 		changes:          map[changeLink]*change{},
 		applied:          map[txid]tx{},
 	}
 
 	d.replicas = make(map[higact.Address]any, len(deps))
-	d.descendentInputs = map[higact.Address][]higact.Address{}
+	d.descendantInputs = map[higact.Address][]higact.Address{}
 	for _, dep := range deps {
 		d.Outbox <- higact.OutboundMessage{Target: dep, Data: subscribeMessage{}}
 		subscription := (<-d.Inbox).Data.(subscriptionGrantedMessage)
 		for _, variable := range subscription.AncestorVariables {
-			d.descendentInputs[variable] = append(d.descendentInputs[variable], dep)
+			d.descendantInputs[variable] = append(d.descendantInputs[variable], dep)
 		}
 		d.replicas[dep] = subscription.Value
 	}
@@ -94,7 +94,7 @@ func (d *Definition) Run() {
 			d.subscribers = append(d.subscribers, who)
 
 			sourcesMap := map[higact.Address]struct{}{}
-			for _, vars := range d.descendentInputs {
+			for _, vars := range d.descendantInputs {
 				for _, varName := range vars {
 					sourcesMap[varName] = struct{}{}
 				}
@@ -133,7 +133,7 @@ func (d *Definition) Run() {
 			for _, tx := range pending.requires {
 				needsTx := false
 				for _, var_ := range tx.Writes {
-					if len(d.descendentInputs[var_]) > 0 {
+					if len(d.descendantInputs[var_]) > 0 {
 						needsTx = true
 						break
 					}
@@ -160,11 +160,15 @@ func (d *Definition) lookupReplicaValue(address higact.Address) any {
 func (d *Definition) changeFromMessage(sender higact.Address, message changeMessage) change {
 	links := map[changeLink]struct{}{}
 	for _, tx := range message.Provides {
-		links[changeLink{tx.Id, sender}] = struct{}{}
+		for _, var_ := range tx.Writes {
+			for _, name := range d.descendantInputs[var_] {
+				links[changeLink{tx.Id, name}] = struct{}{}
+			}
+		}
 	}
 	for _, tx := range message.Requires {
 		for _, var_ := range tx.Writes {
-			for _, name := range d.descendentInputs[var_] {
+			for _, name := range d.descendantInputs[var_] {
 				links[changeLink{tx.Id, name}] = struct{}{}
 			}
 		}
