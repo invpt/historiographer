@@ -84,6 +84,10 @@ Try:
 			}
 		}
 
+		if len(values) != len(targets) {
+			panic("Failed to read all values for transaction")
+		}
+
 		requirements := make([]tx, 0, len(requirementsSet))
 		for id, writes := range requirementsSet {
 			requirements = append(requirements, tx{Id: id, Writes: writes})
