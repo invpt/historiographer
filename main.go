@@ -16,6 +16,12 @@ func main() {
 	// x   y      (definitions)
 	//  \ /
 	//   z        (definition)
+	//
+	// Pseudocode:
+	// var a = 0;
+	// def x = a * 2;
+	// def y = a * 3 + 35;
+	// def z = x + y * 4;
 	a := rt.Variable(0)
 	x := rt.Definition(func(dep higrt.Depend) any { return dep(a).(int) * 2 })
 	y := rt.Definition(func(dep higrt.Depend) any { return dep(a).(int)*3 + 35 })
@@ -30,6 +36,10 @@ func main() {
 	go (func() {
 		time.Sleep(time.Second)
 		fmt.Println()
+		// Pseudocode:
+		// action {
+		//   a = 2;
+		// }
 		rt.Transact(
 			// Declare the required locks ahead of time
 			map[higact.Address]higrt.LockKind{a: higrt.LockKindWrite},
@@ -40,6 +50,10 @@ func main() {
 		)
 		time.Sleep(time.Second)
 		fmt.Println()
+		// Pseudocode:
+		// action {
+		//   a = 55;
+		// }
 		rt.Transact(
 			map[higact.Address]higrt.LockKind{a: higrt.LockKindWrite},
 			func(m map[higact.Address]any) map[higact.Address]any {
