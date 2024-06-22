@@ -1,5 +1,7 @@
-module drp-delta
+module hig
 
-go 1.20
+go 1.21
 
-require github.com/google/uuid v1.3.0
+toolchain go1.22.3
+
+require github.com/google/uuid v1.6.0
