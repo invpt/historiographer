@@ -2,9 +2,9 @@ package higact
 
 import (
 	"fmt"
-	"reflect"
 
 	"github.com/google/uuid"
+	"github.com/puzpuzpuz/xsync/v3"
 )
 
 type Router interface {
@@ -40,11 +40,11 @@ type Actor struct {
 }
 
 func NewLocalRouter() *LocalRouter {
-	return &LocalRouter{actors: map[Address]localActor{}}
+	return &LocalRouter{actors: xsync.NewMapOf[Address, localActor]()}
 }
 
 type LocalRouter struct {
-	actors map[Address]localActor
+	actors *xsync.MapOf[Address, localActor]
 }
 
 type localActor struct {
@@ -57,7 +57,7 @@ func (r *LocalRouter) CreateActor() Actor {
 	inbox := make(chan InboundMessage, 1024)
 	outbox := make(chan OutboundMessage, 1024)
 
-	r.actors[address] = localActor{inbox: inbox, outbox: outbox}
+	r.actors.Store(address, localActor{inbox: inbox, outbox: outbox})
 
 	go r.handleOutboxMessages(address)
 
@@ -65,16 +65,29 @@ func (r *LocalRouter) CreateActor() Actor {
 }
 
 func (r *LocalRouter) handleOutboxMessages(address Address) {
-	for message := range r.actors[address].outbox {
-		fmt.Println("----> Message from", address, "to", message.Target, "with", reflect.TypeOf(message.Data), message.Data)
-		r.actors[message.Target].inbox <- InboundMessage{Sender: address, Data: message.Data}
+	actor, ok := r.actors.Load(address)
+	if !ok {
+		panic("handleOutboxMessages called with bad address")
+	}
+
+	for message := range actor.outbox {
+		fmt.Printf("----> Message from %v to %v with %#v\n", address, message.Target, message.Data)
+		target, ok := r.actors.Load(message.Target)
+		if !ok {
+			panic(fmt.Sprintf("Message sent to nonexistent actor with address %v", message.Target))
+		}
+		target.inbox <- InboundMessage{Sender: address, Data: message.Data}
 	}
 }
 
 func (r *LocalRouter) FreeActor(address Address) {
-	close(r.actors[address].inbox)
-	close(r.actors[address].outbox)
-	delete(r.actors, address)
+	actor, ok := r.actors.Load(address)
+	if !ok {
+		panic("Attempted to free nonexistent actor (double free?)")
+	}
+	close(actor.inbox)
+	close(actor.outbox)
+	r.actors.Delete(address)
 }
 
 var counter int = 0
