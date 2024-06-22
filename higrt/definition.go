@@ -342,7 +342,7 @@ func (d *definition) providedTransactions(batch map[*change]struct{}) (provided 
 		}
 	}
 
-	provided = make([]tx, len(providedMap))
+	provided = make([]tx, 0, len(providedMap))
 	for id, writes := range providedMap {
 		provided = append(provided, tx{Id: id, Writes: writes})
 	}
@@ -364,7 +364,7 @@ func (d *definition) requiredTransactions(batch map[*change]struct{}) (required 
 		requiredMap[tx.Id] = tx.Writes
 	}
 
-	required = make([]tx, len(requiredMap))
+	required = make([]tx, 0, len(requiredMap))
 	for id, writes := range requiredMap {
 		required = append(required, tx{Id: id, Writes: writes})
 	}
