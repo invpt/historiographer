@@ -72,8 +72,8 @@ func (rt *Runtime) NewDefinition(deps []higact.Address, f func(func(higact.Addre
 			d.descendentInputs[variable] = append(d.descendentInputs[variable], dep)
 		}
 		d.replicas[dep] = subscription.Value
-		d.value = f(func(a higact.Address) any { return d.replicas[a] })
 	}
+	d.value = f(func(a higact.Address) any { return d.replicas[a] })
 
 	return d
 }
