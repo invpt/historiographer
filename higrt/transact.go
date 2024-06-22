@@ -98,8 +98,11 @@ Try:
 			actor.Outbox <- higact.OutboundMessage{Target: address, Data: varWriteMessage{Tx: tx{Id: id, Writes: writes}, Value: value, Requires: requirements}}
 		}
 
-		for address := range targets {
-			actor.Outbox <- higact.OutboundMessage{Target: address, Data: varLockReleaseMessage{Txid: id}}
+		for address, kind := range targets {
+			if kind == LockKindWrite {
+				// Only send release messages to write locks, read locks are auto-released
+				actor.Outbox <- higact.OutboundMessage{Target: address, Data: varLockReleaseMessage{Txid: id}}
+			}
 		}
 
 		break
