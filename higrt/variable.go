@@ -4,7 +4,7 @@ import (
 	"hig/higact"
 )
 
-type Variable struct {
+type variable struct {
 	higact.Actor
 
 	// The currently-held locks
@@ -48,11 +48,13 @@ type lockStateWrite struct {
 	value any
 }
 
-func (rt *Runtime) NewVariable(value any) *Variable {
-	return &Variable{Actor: rt.router.CreateActor(), locks: map[txid]lockState{}, nextChangeRequires: map[txid]tx{}, value: value}
+func (rt *Runtime) Variable(value any) higact.Address {
+	v := &variable{Actor: rt.router.CreateActor(), locks: map[txid]lockState{}, nextChangeRequires: map[txid]tx{}, value: value}
+	go v.run()
+	return v.Address
 }
 
-func (v *Variable) Run() {
+func (v *variable) run() {
 	for message := range v.Inbox {
 		switch messageData := message.Data.(type) {
 		case varLockAcquireMessage:

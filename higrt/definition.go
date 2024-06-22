@@ -4,7 +4,7 @@ import (
 	"hig/higact"
 )
 
-type Definition struct {
+type definition struct {
 	higact.Actor
 
 	// Monotonic counter used to order received changes.
@@ -51,10 +51,10 @@ type changeLink struct {
 	address higact.Address
 }
 
-func (rt *Runtime) NewDefinition(deps []higact.Address, f func(func(higact.Address) any) any) *Definition {
+func (rt *Runtime) Definition(deps []higact.Address, f func(func(higact.Address) any) any) higact.Address {
 	actor := rt.router.CreateActor()
 
-	d := &Definition{
+	d := &definition{
 		Actor:            actor,
 		f:                f,
 		replicas:         make(map[higact.Address]any, len(deps)),
@@ -75,10 +75,12 @@ func (rt *Runtime) NewDefinition(deps []higact.Address, f func(func(higact.Addre
 	}
 	d.value = f(func(a higact.Address) any { return d.replicas[a] })
 
-	return d
+	go d.run()
+
+	return d.Address
 }
 
-func (d *Definition) Run() {
+func (d *definition) run() {
 	for message := range d.Inbox {
 		switch messageData := message.Data.(type) {
 		case changeMessage:
@@ -152,12 +154,12 @@ func (d *Definition) Run() {
 	}
 }
 
-func (d *Definition) lookupReplicaValue(address higact.Address) any {
+func (d *definition) lookupReplicaValue(address higact.Address) any {
 	return d.replicas[address]
 }
 
 // Converts a `ChangeMessage` to the internal `change` type.
-func (d *Definition) changeFromMessage(sender higact.Address, message changeMessage) change {
+func (d *definition) changeFromMessage(sender higact.Address, message changeMessage) change {
 	links := map[changeLink]struct{}{}
 	for _, tx := range message.Provides {
 		for _, var_ := range tx.Writes {
@@ -215,7 +217,7 @@ type tarjanComponent struct {
 // Finds all batches that can be executed now. Returns in order of allowable execution.
 //
 // Implemented using Tarjan's algorithm for strongly connected components.
-func (d *Definition) findBatches() (batches []map[*change]struct{}) {
+func (d *definition) findBatches() (batches []map[*change]struct{}) {
 	stateVal := tarjan{indexCounter: 1, index: map[*change]int{}, lowlink: map[*change]int{}, tainted: map[*change]bool{}, onStack: map[*change]bool{}}
 	state := &stateVal
 
@@ -235,7 +237,7 @@ func (d *Definition) findBatches() (batches []map[*change]struct{}) {
 }
 
 // Visits the given vertex `v` under the given Tarjan `state`.
-func (d *Definition) scc(state *tarjan, v *change) {
+func (d *definition) scc(state *tarjan, v *change) {
 	state.index[v] = state.indexCounter
 	state.lowlink[v] = state.indexCounter
 	state.indexCounter += 1
@@ -291,7 +293,7 @@ func (d *Definition) scc(state *tarjan, v *change) {
 ///////////////////////////////////////////////////
 
 // Applies a batch.
-func (d *Definition) applyBatch(batch map[*change]struct{}) (provides []tx, requires []tx) {
+func (d *definition) applyBatch(batch map[*change]struct{}) (provides []tx, requires []tx) {
 	provides = d.providedTransactions(batch)
 	requires = d.requiredTransactions(batch)
 
@@ -318,7 +320,7 @@ func (d *Definition) applyBatch(batch map[*change]struct{}) (provides []tx, requ
 }
 
 // Computes the list of transactions provided by an entire batch.
-func (d *Definition) providedTransactions(batch map[*change]struct{}) (provided []tx) {
+func (d *definition) providedTransactions(batch map[*change]struct{}) (provided []tx) {
 	providedMap := map[txid][]higact.Address{}
 
 	for change := range batch {
@@ -336,7 +338,7 @@ func (d *Definition) providedTransactions(batch map[*change]struct{}) (provided 
 }
 
 // Computes the list of transactions required by an entire batch.
-func (d *Definition) requiredTransactions(batch map[*change]struct{}) (required []tx) {
+func (d *definition) requiredTransactions(batch map[*change]struct{}) (required []tx) {
 	requiredMap := map[txid][]higact.Address{}
 
 	for change := range batch {
