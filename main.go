@@ -28,6 +28,8 @@ func main() {
 
 	// Run some transactions
 	go (func() {
+		time.Sleep(time.Second)
+		fmt.Println()
 		rt.Transact(
 			// Declare the required locks ahead of time
 			map[higact.Address]higrt.LockKind{a: higrt.LockKindWrite},
@@ -36,7 +38,8 @@ func main() {
 				return map[higact.Address]any{a: 2}
 			},
 		)
-		time.Sleep(time.Second * 2)
+		time.Sleep(time.Second)
+		fmt.Println()
 		rt.Transact(
 			map[higact.Address]higrt.LockKind{a: higrt.LockKindWrite},
 			func(m map[higact.Address]any) map[higact.Address]any {

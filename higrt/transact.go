@@ -10,7 +10,7 @@ func (rt *Runtime) Transact(targets map[higact.Address]LockKind, f func(map[higa
 	actor := rt.router.CreateActor()
 	defer rt.router.FreeActor(actor.Address)
 
-	fmt.Println("Starting transaction,", actor.Address)
+	fmt.Println("Starting transaction with ephemeral address", actor.Address)
 
 Try:
 	for {
