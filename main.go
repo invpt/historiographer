@@ -10,6 +10,12 @@ import (
 func main() {
 	rt := higrt.NewRuntime(higact.NewLocalRouter())
 
+	// Dependency graph:
+	//   a        (state variable)
+	//  / \
+	// x   y      (definitions)
+	//  \ /
+	//   z        (definition)
 	a := rt.Variable(0)
 	x := rt.Definition(func(dep higrt.Depend) any { return dep(a) })
 	y := rt.Definition(func(dep higrt.Depend) any { return dep(a) })
